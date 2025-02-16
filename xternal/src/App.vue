@@ -12,6 +12,19 @@
     <div class="status">
       <p>Eye Tracking: <span :class="{ active: eyeTrackingActive }">{{ eyeTrackingActive ? "Active" : "Waiting..." }}</span></p>
     </div>
+
+    <!-- Controls -->
+    <div class="controls">
+      <button @click="toggleMute">Mute</button>
+      <button @click="toggleVideo">Video</button>
+      <button @click="createMeeting">Create Meeting</button>
+      <button @click="joinMeeting">Join Meeting</button>
+    </div>
+
+    <!-- Notepad UI -->
+    <div class="notepad">
+      <textarea v-model="noteText" placeholder="Take notes here..." rows="5"></textarea>
+    </div>
   </div>
 </template>
 
@@ -19,26 +32,35 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import WebGazer from 'webgazer';
+import { io } from 'socket.io-client';
 
 export default {
   data() {
     return {
       eyeTrackingActive: false,
-      model: null,
       video: null,
       avatar: null,
+      socket: null,
+      localStream: null,
+      remoteStreams: {},
+      noteText: '',
+      meetingCode: null,
+      isMuted: false,
+      isVideoOn: true,
+      avatarMovementSpeed: 0.2,
     };
   },
   async mounted() {
     await this.initEyeTracking();
     this.initScene();
+    this.initSocket();
   },
   methods: {
     async initEyeTracking() {
       try {
         WebGazer.setRegression('ridge')
           .setTracker('clmtrackr')
-          .setGazeListener((data, elapsedTime) => {
+          .setGazeListener((data) => {
             if (data) {
               const normalizedX = (data.x - window.innerWidth / 2) / (window.innerWidth / 2);
               const normalizedY = (data.y - window.innerHeight / 2) / (window.innerHeight / 2);
@@ -75,7 +97,7 @@ export default {
     loadAvatar() {
       const loader = new GLTFLoader();
       loader.load(
-        'https://models.readyplayer.me/64df6400de95cba2305aaf7d.glb',
+        'https://models.readyplayer.me/64df6400de95cba2305aaf7d.glb', // Example Avatar URL
         (gltf) => {
           this.avatar = gltf.scene;
           this.avatar.scale.set(2, 2, 2);
@@ -91,8 +113,39 @@ export default {
       this.renderer.setAnimationLoop(() => {
         this.renderer.render(this.scene, this.camera);
       });
-    }
-  }
+    },
+    initSocket() {
+      this.socket = io('http://localhost:3000'); // Use your server address here
+      this.socket.on('connect', () => {
+        console.log('Connected to server');
+      });
+    },
+    toggleMute() {
+      this.isMuted = !this.isMuted;
+      if (this.localStream) {
+        this.localStream.getTracks().forEach(track => {
+          if (track.kind === 'audio') track.enabled = !this.isMuted;
+        });
+      }
+    },
+    toggleVideo() {
+      this.isVideoOn = !this.isVideoOn;
+      if (this.localStream) {
+        this.localStream.getTracks().forEach(track => {
+          if (track.kind === 'video') track.enabled = !this.isVideoOn;
+        });
+      }
+    },
+    createMeeting() {
+      this.meetingCode = Math.floor(Math.random() * 1000000);
+      console.log(`Meeting code: ${this.meetingCode}`);
+      this.socket.emit('createMeeting', this.meetingCode);
+    },
+    joinMeeting() {
+      if (!this.meetingCode) return alert("Please enter a meeting code.");
+      this.socket.emit('joinMeeting', this.meetingCode);
+    },
+  },
 };
 </script>
 
@@ -151,5 +204,41 @@ export default {
 
 .status .active {
   color: #0f0;
+}
+
+.controls {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 10px;
+}
+
+.controls button {
+  background-color: #ff0080;
+  color: white;
+  padding: 10px;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.controls button:hover {
+  background-color: #ff8c00;
+}
+
+.notepad {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 300px;
+}
+
+.notepad textarea {
+  width: 100%;
+  height: 150px;
+  border-radius: 8px;
+  padding: 10px;
 }
 </style>
