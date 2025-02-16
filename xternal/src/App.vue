@@ -1,6 +1,6 @@
 <template>
   <div id="app">
-    <canvas ref="sceneCanvas" class="scene-canvas"></canvas>
+    <canvas ref="sceneCanvas"></canvas>
 
     <!-- Branding -->
     <div class="branding">
@@ -79,118 +79,81 @@ export default {
       this.avatar.rotation.x = normalizedY * Math.PI / 2; // Rotate up/down
     },
     initScene() {
-      try {
-        this.scene = new THREE.Scene();
-        this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-        this.camera.position.set(0, 1, 5); // Set camera to be slightly above and back from the center
-        this.renderer = new THREE.WebGLRenderer({ antialias: true, canvas: this.$refs.sceneCanvas });
-        this.renderer.setSize(window.innerWidth, window.innerHeight);
-        document.body.appendChild(this.renderer.domElement);
+      this.scene = new THREE.Scene();
+      this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+      this.renderer = new THREE.WebGLRenderer({ antialias: true, canvas: this.$refs.sceneCanvas });
+      this.renderer.setSize(window.innerWidth, window.innerHeight);
+      document.body.appendChild(this.renderer.domElement);
 
-        this.setupLighting();
-        this.loadAvatar();
-        this.animate();
-      } catch (error) {
-        console.error('Error during scene initialization:', error);
-      }
+      this.setupLighting();
+      this.loadAvatar();
+      this.animate();
     },
     setupLighting() {
-      try {
-        const light = new THREE.DirectionalLight(0xffffff, 1);
-        light.position.set(5, 10, 7.5);
-        this.scene.add(light);
-      } catch (error) {
-        console.error('Error setting up lighting:', error);
-      }
+      const light = new THREE.DirectionalLight(0xffffff, 1);
+      light.position.set(5, 10, 7.5);
+      this.scene.add(light);
     },
     loadAvatar() {
-      try {
-        const loader = new GLTFLoader();
-        loader.load(
-          'https://models.readyplayer.me/64df6400de95cba2305aaf7d.glb', // Example Avatar URL
-          (gltf) => {
-            this.avatar = gltf.scene;
-            this.avatar.scale.set(2, 2, 2);
-            this.scene.add(this.avatar);
-          },
-          undefined,
-          (error) => {
-            console.error("Error loading avatar:", error);
-          }
-        );
-      } catch (error) {
-        console.error('Error loading avatar:', error);
-      }
+      const loader = new GLTFLoader();
+      loader.load(
+        'https://models.readyplayer.me/64df6400de95cba2305aaf7d.glb', // Example Avatar URL
+        (gltf) => {
+          this.avatar = gltf.scene;
+          this.avatar.scale.set(2, 2, 2);
+          this.scene.add(this.avatar);
+        },
+        undefined,
+        (error) => {
+          console.error("Error loading avatar:", error);
+        }
+      );
     },
     animate() {
-      try {
-        this.renderer.setAnimationLoop(() => {
-          this.renderer.render(this.scene, this.camera);
-        });
-      } catch (error) {
-        console.error('Error during animation loop:', error);
-      }
+      this.renderer.setAnimationLoop(() => {
+        this.renderer.render(this.scene, this.camera);
+      });
     },
     initSocket() {
-      try {
-        this.socket = io('http://localhost:3000'); // Use your server address here
-        this.socket.on('connect', () => {
-          console.log('Connected to server');
-        });
-        this.socket.on('meetingCreated', (meetingCode) => {
-          console.log(`Meeting created with code: ${meetingCode}`);
-          this.meetingCode = meetingCode;
-        });
-        this.socket.on('meetingJoined', (meetingCode) => {
-          console.log(`Joined meeting with code: ${meetingCode}`);
-        });
-        this.socket.on('meetingNotFound', (message) => {
-          alert(message);
-        });
-      } catch (error) {
-        console.error('Error initializing socket connection:', error);
-      }
+      this.socket = io('http://localhost:3000'); // Use your server address here
+      this.socket.on('connect', () => {
+        console.log('Connected to server');
+      });
+      this.socket.on('meetingCreated', (meetingCode) => {
+        console.log(`Meeting created with code: ${meetingCode}`);
+        this.meetingCode = meetingCode;
+      });
+      this.socket.on('meetingJoined', (meetingCode) => {
+        console.log(`Joined meeting with code: ${meetingCode}`);
+      });
+      this.socket.on('meetingNotFound', (message) => {
+        alert(message);
+      });
     },
     toggleMute() {
-      try {
-        this.isMuted = !this.isMuted;
-        if (this.localStream) {
-          this.localStream.getTracks().forEach(track => {
-            if (track.kind === 'audio') track.enabled = !this.isMuted;
-          });
-        }
-      } catch (error) {
-        console.error('Error toggling mute:', error);
+      this.isMuted = !this.isMuted;
+      if (this.localStream) {
+        this.localStream.getTracks().forEach(track => {
+          if (track.kind === 'audio') track.enabled = !this.isMuted;
+        });
       }
     },
     toggleVideo() {
-      try {
-        this.isVideoOn = !this.isVideoOn;
-        if (this.localStream) {
-          this.localStream.getTracks().forEach(track => {
-            if (track.kind === 'video') track.enabled = !this.isVideoOn;
-          });
-        }
-      } catch (error) {
-        console.error('Error toggling video:', error);
+      this.isVideoOn = !this.isVideoOn;
+      if (this.localStream) {
+        this.localStream.getTracks().forEach(track => {
+          if (track.kind === 'video') track.enabled = !this.isVideoOn;
+        });
       }
     },
     createMeeting() {
-      try {
-        this.meetingCode = Math.floor(Math.random() * 1000000);
-        console.log(`Meeting code: ${this.meetingCode}`);
-        this.socket.emit('createMeeting', this.meetingCode);
-      } catch (error) {
-        console.error('Error creating meeting:', error);
-      }
+      this.meetingCode = Math.floor(Math.random() * 1000000);
+      console.log(`Meeting code: ${this.meetingCode}`);
+      this.socket.emit('createMeeting', this.meetingCode);
     },
     joinMeeting() {
-      try {
-        if (!this.meetingCode) return alert("Please enter a meeting code.");
-        this.socket.emit('joinMeeting', this.meetingCode);
-      } catch (error) {
-        console.error('Error joining meeting:', error);
-      }
+      if (!this.meetingCode) return alert("Please enter a meeting code.");
+      this.socket.emit('joinMeeting', this.meetingCode);
     },
   },
 };
@@ -217,18 +180,13 @@ export default {
   100% { background-position: 0% 50%; }
 }
 
-.scene-canvas {
+/* Centered Branding */
+.branding {
   position: absolute;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-}
-
-.branding {
-  position: absolute;
-  top: 20px;
-  left: 20px;
-  text-align: left;
+  text-align: center;
   color: white;
   font-family: 'Arial', sans-serif;
   text-shadow: 2px 2px 10px rgba(255, 0, 128, 0.7);
