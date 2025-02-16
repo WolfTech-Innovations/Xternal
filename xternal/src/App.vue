@@ -15,8 +15,8 @@
 
     <!-- Controls -->
     <div class="controls">
-      <button @click="toggleMute">Mute</button>
-      <button @click="toggleVideo">Video</button>
+      <button @click="toggleMute">{{ isMuted ? 'Unmute' : 'Mute' }}</button>
+      <button @click="toggleVideo">{{ isVideoOn ? 'Video Off' : 'Video On' }}</button>
       <button @click="createMeeting">Create Meeting</button>
       <button @click="joinMeeting">Join Meeting</button>
     </div>
@@ -118,6 +118,16 @@ export default {
       this.socket = io('http://localhost:3000'); // Use your server address here
       this.socket.on('connect', () => {
         console.log('Connected to server');
+      });
+      this.socket.on('meetingCreated', (meetingCode) => {
+        console.log(`Meeting created with code: ${meetingCode}`);
+        this.meetingCode = meetingCode;
+      });
+      this.socket.on('meetingJoined', (meetingCode) => {
+        console.log(`Joined meeting with code: ${meetingCode}`);
+      });
+      this.socket.on('meetingNotFound', (message) => {
+        alert(message);
       });
     },
     toggleMute() {
