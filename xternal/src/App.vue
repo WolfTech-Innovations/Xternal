@@ -1,256 +1,383 @@
 <template>
   <div id="app">
-    <canvas ref="sceneCanvas"></canvas>
+    <!-- VR Scene -->
+    <a-scene ref="aScene" embedded>
+      <!-- Environment -->
+      <a-sky color="#1a1a1a"></a-sky>
+      <a-plane position="0 0 0" rotation="-90 0 0" width="30" height="30" color="#333"></a-plane>
+      
+      <!-- Conference Room -->
+      <a-entity id="conferenceRoom">
+        <!-- Central Table -->
+        <a-cylinder position="0 0.5 0" radius="3" height="1" color="#444"></a-cylinder>
+        
+        <!-- Video Screens - One for each participant -->
+        <a-entity id="screenContainer" position="0 3 -5">
+          <!-- Screens will be added dynamically -->
+        </a-entity>
 
-    <!-- Branding -->
-    <div class="branding">
-      <h1>WolfTech Innovations</h1>
-      <h2>Xternal</h2>
-    </div>
+        <!-- Avatar Container -->
+        <a-entity id="avatarContainer">
+          <!-- User avatars will be added dynamically -->
+        </a-entity>
+      </a-entity>
 
-    <!-- Eye Tracking Status -->
-    <div class="status">
-      <p>Eye Tracking: <span :class="{ active: eyeTrackingActive }">{{ eyeTrackingActive ? "Active" : "Waiting..." }}</span></p>
-    </div>
+      <!-- User Camera Rig -->
+      <a-entity id="rig" position="0 1.6 0">
+        <a-camera look-controls wasd-controls>
+          <a-cursor raycaster="objects: .interactive"></a-cursor>
+        </a-camera>
+      </a-entity>
 
-    <!-- Controls -->
-    <div class="controls">
-      <button @click="toggleMute">{{ isMuted ? 'Unmute' : 'Mute' }}</button>
-      <button @click="toggleVideo">{{ isVideoOn ? 'Video Off' : 'Video On' }}</button>
-      <button @click="createMeeting">Create Meeting</button>
-      <button @click="joinMeeting">Join Meeting</button>
-    </div>
+      <!-- Lighting -->
+      <a-light type="ambient" intensity="0.5"></a-light>
+      <a-light type="directional" position="1 1 1" intensity="0.8"></a-light>
+    </a-scene>
 
-    <!-- Notepad UI -->
-    <div class="notepad">
-      <textarea v-model="noteText" placeholder="Take notes here..." rows="5"></textarea>
+    <!-- Web UI -->
+    <div class="web-ui" :class="{ 'vr-mode': isInVR }">
+      <div class="video-grid" v-if="!isInVR">
+        <div v-for="stream in allStreams" :key="stream.id" class="video-container">
+          <video :ref="'video-' + stream.id" autoplay playsinline></video>
+          <div class="user-name">{{ stream.userName }}</div>
+        </div>
+      </div>
+
+      <div class="controls">
+        <button @click="toggleMute">{{ isMuted ? 'Unmute' : 'Mute' }}</button>
+        <button @click="toggleVideo">{{ isVideoOn ? 'Video Off' : 'Video On' }}</button>
+        <button @click="toggleVR" v-if="isVRSupported">{{ isInVR ? 'Exit VR' : 'Enter VR' }}</button>
+        <button @click="leaveRoom">Leave Room</button>
+      </div>
     </div>
   </div>
 </template>
 
 <script>
-import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import WebGazer from 'webgazer';
 import { io } from 'socket.io-client';
+import 'aframe';
 
 export default {
   data() {
     return {
-      eyeTrackingActive: false,
-      video: null,
-      avatar: null,
       socket: null,
       localStream: null,
-      remoteStreams: {},
-      noteText: '',
-      meetingCode: null,
+      peerConnections: {},
+      allStreams: [],
+      userId: null,
+      roomId: null,
+      isInVR: false,
       isMuted: false,
       isVideoOn: true,
-      avatarMovementSpeed: 0.2,
+      isVRSupported: false,
+      userColors: {},
+      avatarRefs: {},
     };
   },
   async mounted() {
-    await this.initEyeTracking();
-    this.initScene();
-    this.initSocket();
+    this.userId = 'user_' + Math.random().toString(36).substr(2, 9);
+    this.isVRSupported = navigator.xr !== undefined;
+    await this.initializeRoom();
+    this.setupSocketEvents();
+    this.setupVREvents();
   },
   methods: {
-    async initEyeTracking() {
+    async initializeRoom() {
+      // Initialize WebRTC and room
       try {
-        WebGazer.setRegression('ridge')
-          .setTracker('clmtrackr')
-          .setGazeListener((data) => {
-            if (data) {
-              const normalizedX = (data.x - window.innerWidth / 2) / (window.innerWidth / 2);
-              const normalizedY = (data.y - window.innerHeight / 2) / (window.innerHeight / 2);
-              this.updateAvatarHead(normalizedX, normalizedY);
-            }
-          })
-          .begin();
-        this.eyeTrackingActive = true;
-      } catch (error) {
-        console.error("Error initializing eye tracking:", error);
+        this.localStream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: true
+        });
+        this.socket = io('http://localhost:3000');
+        this.setupLocalStream();
+      } catch (err) {
+        console.error('Media initialization error:', err);
       }
     },
-    updateAvatarHead(normalizedX, normalizedY) {
-      if (!this.avatar) return;
-      this.avatar.rotation.y = normalizedX * Math.PI; // Rotate left/right
-      this.avatar.rotation.x = normalizedY * Math.PI / 2; // Rotate up/down
-    },
-    initScene() {
-      this.scene = new THREE.Scene();
-      this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-      this.renderer = new THREE.WebGLRenderer({ antialias: true, canvas: this.$refs.sceneCanvas });
-      this.renderer.setSize(window.innerWidth, window.innerHeight);
-      document.body.appendChild(this.renderer.domElement);
 
-      this.setupLighting();
-      this.loadAvatar();
-      this.animate();
+    setupSocketEvents() {
+      this.socket.on('userJoined', async ({ userId, color }) => {
+        this.userColors[userId] = color;
+        this.createUserAvatar(userId);
+        await this.createPeerConnection(userId);
+      });
+
+      this.socket.on('userLeft', (userId) => {
+        this.removeUser(userId);
+      });
+
+      this.socket.on('offer', async ({ offer, from }) => {
+        const pc = await this.createPeerConnection(from);
+        await pc.setRemoteDescription(offer);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        this.socket.emit('answer', { answer, to: from });
+      });
+
+      this.socket.on('answer', async ({ answer, from }) => {
+        await this.peerConnections[from].setRemoteDescription(answer);
+      });
+
+      this.socket.on('iceCandidate', async ({ candidate, from }) => {
+        await this.peerConnections[from].addIceCandidate(candidate);
+      });
+
+      this.socket.on('userMoved', ({ userId, position, rotation }) => {
+        this.updateUserAvatar(userId, position, rotation);
+      });
     },
-    setupLighting() {
-      const light = new THREE.DirectionalLight(0xffffff, 1);
-      light.position.set(5, 10, 7.5);
-      this.scene.add(light);
+
+    createUserAvatar(userId) {
+      const color = this.userColors[userId] || this.getRandomColor();
+      const avatarEntity = document.createElement('a-sphere');
+      
+      avatarEntity.setAttribute('radius', '0.3');
+      avatarEntity.setAttribute('color', color);
+      avatarEntity.setAttribute('position', this.getRandomPosition());
+      avatarEntity.setAttribute('class', 'avatar');
+      avatarEntity.setAttribute('id', `avatar-${userId}`);
+      
+      this.$refs.aScene.querySelector('#avatarContainer').appendChild(avatarEntity);
+      this.avatarRefs[userId] = avatarEntity;
     },
-    loadAvatar() {
-      const loader = new GLTFLoader();
-      loader.load(
-        'https://models.readyplayer.me/64df6400de95cba2305aaf7d.glb', // Example Avatar URL
-        (gltf) => {
-          this.avatar = gltf.scene;
-          this.avatar.scale.set(2, 2, 2);
-          this.scene.add(this.avatar);
-        },
-        undefined,
-        (error) => {
-          console.error("Error loading avatar:", error);
+
+    updateUserAvatar(userId, position, rotation) {
+      const avatar = this.avatarRefs[userId];
+      if (avatar) {
+        avatar.setAttribute('position', position);
+        avatar.object3D.rotation.copy(rotation);
+      }
+    },
+
+    getRandomColor() {
+      const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEEAD', '#D4A5A5'];
+      return colors[Math.floor(Math.random() * colors.length)];
+    },
+
+    getRandomPosition() {
+      const angle = Math.random() * Math.PI * 2;
+      const radius = 2 + Math.random() * 1; // Random position around the table
+      return {
+        x: Math.cos(angle) * radius,
+        y: 1.6, // Head height
+        z: Math.sin(angle) * radius
+      };
+    },
+
+    async createPeerConnection(userId) {
+      if (this.peerConnections[userId]) return this.peerConnections[userId];
+
+      const pc = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      });
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          this.socket.emit('iceCandidate', {
+            candidate: event.candidate,
+            to: userId
+          });
         }
-      );
+      };
+
+      pc.ontrack = (event) => {
+        this.addRemoteStream(userId, event.streams[0]);
+      };
+
+      this.localStream.getTracks().forEach(track => {
+        pc.addTrack(track, this.localStream);
+      });
+
+      this.peerConnections[userId] = pc;
+      return pc;
     },
-    animate() {
-      this.renderer.setAnimationLoop(() => {
-        this.renderer.render(this.scene, this.camera);
+
+    addRemoteStream(userId, stream) {
+      this.allStreams.push({
+        id: userId,
+        stream,
+        userName: `User ${userId.slice(0, 4)}`
       });
+
+      // Add video to VR scene
+      this.addVideoToVRScene(userId, stream);
     },
-    initSocket() {
-      this.socket = io('http://localhost:3000'); // Use your server address here
-      this.socket.on('connect', () => {
-        console.log('Connected to server');
-      });
-      this.socket.on('meetingCreated', (meetingCode) => {
-        console.log(`Meeting created with code: ${meetingCode}`);
-        this.meetingCode = meetingCode;
-      });
-      this.socket.on('meetingJoined', (meetingCode) => {
-        console.log(`Joined meeting with code: ${meetingCode}`);
-      });
-      this.socket.on('meetingNotFound', (message) => {
-        alert(message);
-      });
+
+    addVideoToVRScene(userId, stream) {
+      const screenEntity = document.createElement('a-plane');
+      const videoEl = document.createElement('video');
+      
+      videoEl.srcObject = stream;
+      videoEl.id = `video-${userId}`;
+      videoEl.play();
+
+      screenEntity.setAttribute('width', '2');
+      screenEntity.setAttribute('height', '1.5');
+      screenEntity.setAttribute('position', this.getScreenPosition(this.allStreams.length - 1));
+      screenEntity.setAttribute('material', 'src', `#video-${userId}`);
+      
+      this.$refs.aScene.querySelector('#screenContainer').appendChild(screenEntity);
     },
+
+    getScreenPosition(index) {
+      const angle = (index * Math.PI / 4) - (Math.PI / 2);
+      const radius = 5;
+      return {
+        x: Math.cos(angle) * radius,
+        y: 2,
+        z: Math.sin(angle) * radius - 5
+      };
+    },
+
+    setupVREvents() {
+      if (this.isVRSupported) {
+        this.$refs.aScene.addEventListener('enter-vr', () => {
+          this.isInVR = true;
+          this.startVRTracking();
+        });
+
+        this.$refs.aScene.addEventListener('exit-vr', () => {
+          this.isInVR = false;
+          this.stopVRTracking();
+        });
+      }
+    },
+
+    startVRTracking() {
+      // Track user position and rotation in VR
+      const rig = document.querySelector('#rig');
+      this.vrInterval = setInterval(() => {
+        this.socket.emit('userMoved', {
+          position: rig.getAttribute('position'),
+          rotation: rig.object3D.rotation,
+          userId: this.userId
+        });
+      }, 50);
+    },
+
+    stopVRTracking() {
+      if (this.vrInterval) {
+        clearInterval(this.vrInterval);
+      }
+    },
+
+    async toggleVR() {
+      if (this.isInVR) {
+        await this.$refs.aScene.exitVR();
+      } else {
+        await this.$refs.aScene.enterVR();
+      }
+    },
+
     toggleMute() {
       this.isMuted = !this.isMuted;
       if (this.localStream) {
-        this.localStream.getTracks().forEach(track => {
-          if (track.kind === 'audio') track.enabled = !this.isMuted;
+        this.localStream.getAudioTracks().forEach(track => {
+          track.enabled = !this.isMuted;
         });
       }
     },
+
     toggleVideo() {
       this.isVideoOn = !this.isVideoOn;
       if (this.localStream) {
-        this.localStream.getTracks().forEach(track => {
-          if (track.kind === 'video') track.enabled = !this.isVideoOn;
+        this.localStream.getVideoTracks().forEach(track => {
+          track.enabled = this.isVideoOn;
         });
       }
     },
-    createMeeting() {
-      this.meetingCode = Math.floor(Math.random() * 1000000);
-      console.log(`Meeting code: ${this.meetingCode}`);
-      this.socket.emit('createMeeting', this.meetingCode);
+
+    leaveRoom() {
+      this.socket.emit('leaveRoom', this.userId);
+      this.cleanup();
     },
-    joinMeeting() {
-      if (!this.meetingCode) return alert("Please enter a meeting code.");
-      this.socket.emit('joinMeeting', this.meetingCode);
-    },
+
+    cleanup() {
+      Object.values(this.peerConnections).forEach(pc => pc.close());
+      this.peerConnections = {};
+      this.allStreams = [];
+      if (this.localStream) {
+        this.localStream.getTracks().forEach(track => track.stop());
+      }
+      this.socket.disconnect();
+    }
   },
+  beforeDestroy() {
+    this.cleanup();
+  }
 };
 </script>
 
 <style>
-#app {
-  width: 100vw;
-  height: 100vh;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, #20002c, #cbb4d4, #ff0080, #ff8c00);
-  background-size: 400% 400%;
-  animation: gradientBG 10s ease infinite;
+.web-ui {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: auto;
+  transition: opacity 0.3s ease;
+}
+
+.web-ui.vr-mode {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.video-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.video-container {
   position: relative;
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
 }
 
-@keyframes gradientBG {
-  0% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
+.video-container video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
-/* Centered Branding */
-.branding {
+.user-name {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  text-align: center;
+  bottom: 10px;
+  left: 10px;
   color: white;
-  font-family: 'Arial', sans-serif;
-  text-shadow: 2px 2px 10px rgba(255, 0, 128, 0.7);
-}
-
-.branding h1 {
-  font-size: 32px;
-  margin: 0;
-  text-transform: uppercase;
-}
-
-.branding h2 {
-  font-size: 24px;
-  margin-top: 5px;
-  opacity: 0.8;
-}
-
-.status {
-  position: absolute;
-  top: 20px;
-  right: 20px;
-  color: white;
-  font-family: 'Arial', sans-serif;
-  text-shadow: 2px 2px 10px rgba(255, 0, 128, 0.7);
-  font-size: 18px;
-}
-
-.status .active {
-  color: #0f0;
+  background: rgba(0, 0, 0, 0.5);
+  padding: 4px 8px;
+  border-radius: 4px;
 }
 
 .controls {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  display: flex;
-  gap: 10px;
-}
-
-.controls button {
-  background-color: #ff0080;
-  color: white;
-  padding: 10px;
-  border: none;
-  border-radius: 5px;
-  cursor: pointer;
-}
-
-.controls button:hover {
-  background-color: #ff8c00;
-}
-
-.notepad {
-  position: absolute;
+  position: fixed;
   bottom: 20px;
   left: 50%;
   transform: translateX(-50%);
-  width: 300px;
+  display: flex;
+  gap: 10px;
+  background: rgba(0, 0, 0, 0.5);
+  padding: 10px;
+  border-radius: 8px;
 }
 
-.notepad textarea {
-  width: 100%;
-  height: 150px;
-  border-radius: 8px;
-  padding: 10px;
+.controls button {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 4px;
+  background: #4CAF50;
+  color: white;
+  cursor: pointer;
+  transition: background 0.3s ease;
+}
+
+.controls button:hover {
+  background: #45a049;
 }
 </style>
