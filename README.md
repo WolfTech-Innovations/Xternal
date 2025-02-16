@@ -1,2 +1,2 @@
 # Xternal
-Xternal is a new way to confrence, VR Confrencing with a new look at the subject.
+Xternal is a new way to confrence, with simplicity, and transparancy, no trackers, no reduntant featues.

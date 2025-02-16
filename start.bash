@@ -1,6 +1,6 @@
-npm install aframe socket.io-client
 cd xternal
-npm run serve & 
+npm install aframe socket.io-client
+npm run serve --fix & 
 cd ..
 cd xternal-server
-node server.js
+node server.js --fix
