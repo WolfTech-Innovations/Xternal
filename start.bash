@@ -1,3 +1,4 @@
+npm install aframe socket.io-client
 cd xternal
 npm run serve & 
 cd ..
